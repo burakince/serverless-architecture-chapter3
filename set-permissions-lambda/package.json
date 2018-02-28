@@ -1,0 +1,13 @@
+{
+  "name": "set-permissions",
+  "version": "1.0.0",
+  "description": "This Lambda function will set permissions to make transcoded videos publically available",
+  "main": "index.js",
+  "scripts": {
+    "package":"zip -r set-permissions-lambda.zip * -x *.zip *.json *.log *.tf *.md"
+  },
+  "dependencies": {
+    "aws-sdk": "latest"
+  },
+  "license": "BSD-2-Clause"
+}

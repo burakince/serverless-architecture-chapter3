@@ -138,15 +138,17 @@ EOF
 }
 
 resource "aws_s3_bucket" "video_upload_bucket" {
-  bucket = "${var.video_upload_bucket_name}"
-  region = "${var.aws_region}"
-  acl    = "private"
+  bucket        = "${var.video_upload_bucket_name}"
+  region        = "${var.aws_region}"
+  acl           = "private"
+  force_destroy = true
 }
 
 resource "aws_s3_bucket" "video_transcoded_bucket" {
-  bucket = "${var.video_transcoded_bucket_name}"
-  region = "${var.aws_region}"
-  acl    = "private"
+  bucket        = "${var.video_transcoded_bucket_name}"
+  region        = "${var.aws_region}"
+  acl           = "private"
+  force_destroy = true
 }
 
 resource "aws_elastictranscoder_pipeline" "video_transcode_pipeline" {
@@ -198,7 +200,77 @@ resource "aws_s3_bucket_notification" "video_upload" {
   }
 }
 
-# terraform console
-output "pipeline_arn" {
-  value = "${aws_elastictranscoder_pipeline.video_transcode_pipeline.arn}"
+resource "aws_sns_topic" "transcoded_video_notifications" {
+  name = "transcoded_video_notifications"
+}
+
+resource "aws_sns_topic_policy" "default" {
+  arn = "${aws_sns_topic.transcoded_video_notifications.arn}"
+
+  policy = "${data.aws_iam_policy_document.sns_transcoded_video_topic_policy.json}"
+}
+
+data "aws_iam_policy_document" "sns_transcoded_video_topic_policy" {
+  policy_id = "__default_policy_ID"
+
+  statement {
+    actions = [
+      "SNS:Subscribe",
+      "SNS:SetTopicAttributes",
+      "SNS:RemovePermission",
+      "SNS:Receive",
+      "SNS:Publish",
+      "SNS:ListSubscriptionsByTopic",
+      "SNS:GetTopicAttributes",
+      "SNS:DeleteTopic",
+      "SNS:AddPermission",
+    ]
+
+    condition {
+      test     = "ArnLike"
+      variable = "AWS:SourceArn"
+
+      values = [
+        "${aws_s3_bucket.video_transcoded_bucket.arn}",
+      ]
+    }
+
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+
+    resources = [
+      "${aws_sns_topic.transcoded_video_notifications.arn}",
+    ]
+
+    sid = "__default_statement_ID"
+  }
+}
+
+resource "aws_s3_bucket_notification" "transcoded_video" {
+  bucket = "${aws_s3_bucket.video_transcoded_bucket.id}"
+
+  topic {
+    topic_arn     = "${aws_sns_topic.transcoded_video_notifications.arn}"
+    events        = ["s3:ObjectCreated:*"]
+    filter_suffix = "mp4"
+  }
+}
+
+resource "aws_lambda_function" "set_permissions_lambda" {
+  function_name = "set_permissions_lambda"
+  handler = "index.handler"
+  runtime = "nodejs6.10"
+  filename = "./set-permissions-lambda/set-permissions-lambda.zip"
+  source_code_hash = "${base64sha256(file("./set-permissions-lambda/set-permissions-lambda.zip"))}"
+  role = "${aws_iam_role.lambda_s3_execution_role.arn}"
+}
+
+resource "aws_sns_topic_subscription" "lambda_sns_topic_subscription" {
+  topic_arn = "${aws_sns_topic.transcoded_video_notifications.arn}"
+  protocol  = "lambda"
+  endpoint  = "${aws_lambda_function.set_permissions_lambda.arn}"
 }
